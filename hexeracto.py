@@ -1,22 +1,24 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib.collections import LineCollection
+import matplotlib.pyplot as plt  
+import matplotlib.animation as animation 
+from matplotlib.collections import LineCollection 
 import itertools
-
+from typing import List, Tuple
 # Fondo oscuro absoluto para contraste de neones
 plt.style.use('dark_background')
 
+from typing import Any, List, Tuple
 # Generar 64 vértices del hexeracto (hipercubo 6D)
-vertices = np.array(list(itertools.product([-1, 1], repeat=6)), dtype=float)
+raw_vertices = [v for v in itertools.product([-1, 1], repeat=6)]
+vertices = np.array(raw_vertices, dtype=float)
 
 # Encontrar aristas
-edges = []
-for i in range(len(vertices)):
-    for j in range(i + 1, len(vertices)):
-        if np.sum(vertices[i] != vertices[j]) == 1:
-            edges.append((i, j))
-edges = np.array(edges)
+edges_list = []
+for (i, v_i), (j, v_j) in itertools.combinations(enumerate(raw_vertices), 2):
+    # Contamos cuántas coordenadas difieren; si es solo 1, es una arista
+    if sum(1 for a, b in zip(v_i, v_j) if a != b) == 1:  
+        edges_list.append((i, j))
+edges = np.array(edges_list)
 
 def rotation_matrix(dim, plane, angle):
     """ Genera matriz de rotación N-dimensional pura """
@@ -46,17 +48,9 @@ ax.axis('off')
 # Límite de la cámara
 lim = 4.2
 ax.set_xlim(-lim, lim)
-ax.set_ylim(-lim * 0.8, lim * 1.2)  # Desplazado para hacer espacio al reflejo
+ax.set_ylim(-lim, lim)
 
 # --- Colecciones para el efecto Neon Bloom / Glow ---
-# Reflejos (zorder bajo para estar al fondo)
-ref_glow2_col = LineCollection([], linewidths=12, alpha=0.03, zorder=1)
-ref_glow1_col = LineCollection([], linewidths=5, alpha=0.05, zorder=2)
-ref_core_col = LineCollection([], linewidths=1.5, alpha=0.15, zorder=3)
-ax.add_collection(ref_glow2_col)
-ax.add_collection(ref_glow1_col)
-ax.add_collection(ref_core_col)
-
 # Líneas del objeto principal (varias capas para simular bloom real)
 glow3_col = LineCollection([], linewidths=20, alpha=0.03, zorder=5)
 glow2_col = LineCollection([], linewidths=10, alpha=0.08, zorder=6)
@@ -80,11 +74,11 @@ def project_3d_to_2d(pts, focal_length=3.5):
     return p2d
 
 # Suelo (Grid) tipo Tron/Synthwave
-floor_lines = []
+floor_lines: List[List[Tuple[float, float, float]]] = []
 for x in np.linspace(-6, 6, 25):
-    floor_lines.append([(x, -2.0, -6), (x, -2.0, 6)])
+    floor_lines.append([(float(x), -2.0, -6.0), (float(x), -2.0, 6.0)])
 for z in np.linspace(-6, 6, 25):
-    floor_lines.append([(-6, -2.0, z), (6, -2.0, z)])
+    floor_lines.append([(-6.0, -2.0, float(z)), (6.0, -2.0, float(z))])
 
 floor_lines_2d = [project_3d_to_2d(l) for l in floor_lines]
 # Gradiente al suelo, para que el horizonte se difumine
@@ -185,51 +179,8 @@ def update(frame):
     scatter_glow.set_color(v_colors)
     scatter_core.set_offsets(p2d)
     
-    # ---- Reflejo de Suelo con RTX simulado ----
-    # Capturar coordenadas 3D para reflejar en el suelo correctamente
-    dim = 6
-    v_ref = v_rot.copy()
-    fl = 3.5
-    while dim > 3: # Proyectamos desde 6D hasta llegar a 3D nativo (X, Y, Z)
-        d = v_ref[:, dim - 1]
-        w = fl / np.maximum(1e-5, fl + d)
-        v_ref = v_ref[:, :dim-1] * w[:, np.newaxis]
-        dim -= 1
-        
-    # Aplicar espejo en Y sobre un "suelo" de neón
-    floor_y = -2.0
-    v_ref[:, 1] = floor_y - (v_ref[:, 1] - floor_y)
-    
-    # Completar proyección final desde 3D a la cámara 2D
-    d = v_ref[:, 2]
-    w = fl / np.maximum(1e-5, fl + d)
-    p2d_ref = v_ref[:, :2] * w[:, np.newaxis]
-    
-    # Construir segmentos de la reflexión
-    segs_ref = np.zeros((len(edges), 2, 2))
-    segs_ref[:, 0, :] = p2d_ref[edges[:, 0]]
-    segs_ref[:, 1, :] = p2d_ref[edges[:, 1]]
-    
-    # Coloreado del reflejo (Corrimiento de espectro y transparencia real)
-    ref_colors = edge_colors.copy()
-    ref_colors[:, 0] *= 0.3 # Bajar rojo a tope
-    ref_colors[:, 2] = np.clip(ref_colors[:, 2] * 1.5, 0, 1) # Subir brillo azul
-    ref_colors[:, 3] *= 0.35 # Mucha transparencia por pérdida especular
-    
-    ref_glow2_col.set_segments(segs_ref)
-    ref_glow2_col.set_edgecolors(ref_colors)
-    
-    ref_glow1_col.set_segments(segs_ref)
-    ref_glow1_col.set_edgecolors(ref_colors)
-    
-    ref_core_col.set_segments(segs_ref)
-    ref_colors_core = ref_colors.copy()
-    ref_colors_core[:, 3] = np.clip(ref_colors_core[:, 3] * 1.5, 0, 1) # Núcleo un poco mas firme
-    ref_core_col.set_edgecolors(ref_colors_core)
-    
     return (glow3_col, glow2_col, glow1_col, core_col, 
-            scatter_glow, scatter_core, 
-            ref_glow2_col, ref_glow1_col, ref_core_col)
+            scatter_glow, scatter_core)
 
 # Renderizado asíncrono y multi-hilo no es trivial en matplotlib, pero:
 # Reducimos interval a 16ms (aprox 60 FPS) ya que el i7 12700 tritura este código vectorizado.
